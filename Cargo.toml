@@ -1,0 +1,11 @@
+[package]
+name = "db_example"
+version = "0.1.0"
+authors = ["Dmitrii Goriunov <goriunovd@gmail.com>"]
+
+[dependencies]
+env_logger = "0.5"
+actix = "0.7"
+actix-web = "0.7"
+futures = "0.1"
+tokio-postgres = { git="https://github.com/goriunov/rust-postgres.git" }
