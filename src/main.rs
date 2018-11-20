@@ -9,7 +9,7 @@ use actix_web::{http, server, App, AsyncResponder, FutureResponse, HttpRequest, 
 use futures::Future;
 
 mod db;
-use self::db::{AddUser, PgConnection};
+use self::db::{AddUser, PgConnection, ReadUsers};
 
 struct State {
   db: Addr<PgConnection>,
@@ -17,6 +17,30 @@ struct State {
 
 fn index(req: &HttpRequest<State>) -> &'static str {
   "Hello world"
+}
+
+fn read_from_db(req: &HttpRequest<State>) -> FutureResponse<HttpResponse> {
+  let mut resp = HttpResponse::build_from(req);
+  req
+    .state()
+    .db
+    .send(ReadUsers {
+      user_name: String::from("name to search for"),
+      number_of_records: 3, // number of records (that can be improved)
+    }).from_err()
+    .and_then(move |res| match res {
+      Ok(data) => {
+        println!("{:?}", data);
+
+        Ok(
+          resp
+            .header(http::header::SERVER, "Actix")
+            .content_type("application/json")
+            .body("Everything works"),
+        )
+      }
+      Err(_) => Ok(HttpResponse::InternalServerError().into()),
+    }).responder()
 }
 
 fn write_to_db(req: &HttpRequest<State>) -> FutureResponse<HttpResponse> {
@@ -54,6 +78,9 @@ fn main() {
     }).resource("/write/{name}", |r| {
       // write to db
       r.route().f(write_to_db)
+    }).resource("/read", |r| {
+      //
+      r.route().f(read_from_db)
     })
   }).bind("0.0.0.0:3000")
   .unwrap()

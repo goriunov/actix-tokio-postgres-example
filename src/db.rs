@@ -2,13 +2,14 @@ use std::io;
 
 use actix::fut;
 use actix::prelude::*;
-use futures::{Future, Stream};
+use futures::{stream, Future, Stream};
 use tokio_postgres::{connect, Client, Statement, TlsMode};
 
 pub struct PgConnection {
   pg_client: Option<Client>,
   // write all the statements
   write_to_db: Option<Statement>,
+  read_from_db: Option<Statement>,
 }
 
 impl Actor for PgConnection {
@@ -23,6 +24,7 @@ impl PgConnection {
       let pg_actor = PgConnection {
         pg_client: None,
         write_to_db: None,
+        read_from_db: None,
       };
 
       pg_connection
@@ -38,6 +40,19 @@ impl PgConnection {
               .into_actor(pg_actor)
               .and_then(|st, pg_actor, _| {
                 pg_actor.write_to_db = Some(st);
+                fut::ok(())
+              }),
+          );
+
+          // SELECT id, name, data
+          // 	FROM public.person;
+          ctx.wait(
+            pg_client
+              .prepare("SELECT id, name, data FROM person WHERE name='dmitrii'")
+              .map_err(|_| ())
+              .into_actor(pg_actor)
+              .and_then(|st, pg_actor, _| {
+                pg_actor.read_from_db = Some(st);
                 fut::ok(())
               }),
           );
@@ -79,5 +94,62 @@ impl Handler<AddUser> for PgConnection {
         .map_err(|e| io::Error::new(io::ErrorKind::Other, e.0))
         .and_then(|(_, _)| Ok(())),
     )
+  }
+}
+
+// Read from the connection
+#[derive(Debug)]
+pub struct Person {
+  id: i32,
+  name: String,
+  data: Option<Vec<u8>>,
+}
+
+pub struct ReadUsers {
+  pub number_of_records: usize,
+  pub user_name: String,
+}
+
+impl Message for ReadUsers {
+  type Result = io::Result<Vec<Person>>;
+}
+
+impl Handler<ReadUsers> for PgConnection {
+  type Result = ResponseFuture<Vec<Person>, io::Error>;
+  fn handle(&mut self, msg: ReadUsers, _: &mut Self::Context) -> Self::Result {
+    // handle stuff
+    let mut worlds = Vec::with_capacity(msg.number_of_records);
+
+    for _ in 0..msg.number_of_records {
+      worlds.push(
+        self
+          .pg_client
+          .as_mut()
+          .unwrap()
+          .query(
+            self.read_from_db.as_ref().unwrap(),
+            &[&msg.user_name.as_str()],
+          ).into_future()
+          .map_err(|e| io::Error::new(io::ErrorKind::Other, e.0))
+          .and_then(|(row, _)| match row {
+            Some(row) => {
+              let person = Person {
+                id: row.get(0),
+                name: row.get(1),
+                data: row.get(2),
+              };
+              Ok(person)
+            }
+            // Default value can be replace with some thing else :)
+            None => Ok(Person {
+              id: 32,
+              name: "Did not work".to_string(),
+              data: None,
+            }),
+          }),
+      );
+    }
+
+    Box::new(stream::futures_unordered(worlds).collect())
   }
 }
