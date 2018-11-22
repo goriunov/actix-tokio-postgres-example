@@ -48,7 +48,7 @@ impl PgConnection {
           // 	FROM public.person;
           ctx.wait(
             pg_client
-              .prepare("SELECT id, name, data FROM person WHERE name='dmitrii'")
+              .prepare("SELECT id, name, data FROM person WHERE name=$1")
               .map_err(|_| ())
               .into_actor(pg_actor)
               .and_then(|st, pg_actor, _| {
@@ -58,7 +58,6 @@ impl PgConnection {
           );
 
           // end for prepared statements
-
           pg_actor.pg_client = Some(pg_client);
           Arbiter::spawn(conn.map_err(|e| panic!("{}", e)));
           fut::ok(())
@@ -106,8 +105,7 @@ pub struct Person {
 }
 
 pub struct ReadUsers {
-  pub number_of_records: usize,
-  pub user_name: String,
+  pub search_name: String,
 }
 
 impl Message for ReadUsers {
@@ -116,40 +114,27 @@ impl Message for ReadUsers {
 
 impl Handler<ReadUsers> for PgConnection {
   type Result = ResponseFuture<Vec<Person>, io::Error>;
+
   fn handle(&mut self, msg: ReadUsers, _: &mut Self::Context) -> Self::Result {
-    // handle stuff
-    let mut worlds = Vec::with_capacity(msg.number_of_records);
+    let mut worlds = Vec::new();
 
-    for _ in 0..msg.number_of_records {
-      worlds.push(
-        self
-          .pg_client
-          .as_mut()
-          .unwrap()
-          .query(
-            self.read_from_db.as_ref().unwrap(),
-            &[&msg.user_name.as_str()],
-          ).into_future()
-          .map_err(|e| io::Error::new(io::ErrorKind::Other, e.0))
-          .and_then(|(row, _)| match row {
-            Some(row) => {
-              let person = Person {
-                id: row.get(0),
-                name: row.get(1),
-                data: row.get(2),
-              };
-              Ok(person)
-            }
-            // Default value can be replace with some thing else :)
-            None => Ok(Person {
-              id: 32,
-              name: "Did not work".to_string(),
-              data: None,
-            }),
-          }),
-      );
-    }
-
-    Box::new(stream::futures_unordered(worlds).collect())
+    Box::new(
+      self
+        .pg_client
+        .as_mut()
+        .unwrap()
+        .query(
+          self.read_from_db.as_ref().unwrap(),
+          &[&msg.search_name.as_str()],
+        ).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        .fold(worlds, move |mut worlds, row| {
+          worlds.push(Person {
+            id: row.get(0),
+            name: row.get(1),
+            data: row.get(2),
+          });
+          Ok::<_, io::Error>(worlds)
+        }).and_then(|worlds| Ok(worlds)),
+    )
   }
 }

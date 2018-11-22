@@ -25,8 +25,7 @@ fn read_from_db(req: &HttpRequest<State>) -> FutureResponse<HttpResponse> {
     .state()
     .db
     .send(ReadUsers {
-      user_name: String::from("name to search for"),
-      number_of_records: 3, // number of records (that can be improved)
+      search_name: String::from("some_name"),
     }).from_err()
     .and_then(move |res| match res {
       Ok(data) => {
@@ -67,7 +66,7 @@ fn main() {
   env_logger::init();
 
   let sys = actix::System::new("server");
-  let db_url = "postgres://url";
+  let db_url = "";
 
   server::new(move || {
     App::with_state(State {
